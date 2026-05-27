@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Sprint Planner">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#2563eb" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="url(#bg)" />
+  <rect x="14" y="18" width="36" height="30" rx="6" fill="#ffffff" opacity="0.96" />
+  <rect x="14" y="18" width="36" height="8" rx="6" fill="#bfdbfe" />
+  <circle cx="22" cy="22" r="1.7" fill="#2563eb" />
+  <circle cx="30" cy="22" r="1.7" fill="#2563eb" />
+  <circle cx="38" cy="22" r="1.7" fill="#2563eb" />
+  <rect x="20" y="31" width="10" height="4" rx="2" fill="#2563eb" />
+  <rect x="34" y="31" width="10" height="4" rx="2" fill="#93c5fd" />
+  <rect x="20" y="38" width="24" height="4" rx="2" fill="#93c5fd" />
+</svg>

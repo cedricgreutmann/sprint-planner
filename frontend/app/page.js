@@ -1,15 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-const STORAGE_KEY = "sprint-planner-state-v1";
-const DEFAULT_JQL = "project = ABC AND statusCategory != Done ORDER BY priority DESC";
-const controlClass =
-  "h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-sm";
-const primaryButtonClass =
-  "h-9 rounded-lg border border-blue-600 bg-blue-600 px-3 text-sm font-medium text-white shadow-sm";
-const secondaryButtonClass =
-  "h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm";
+const ISSUE_PROJECT_KEY = "IWA";
+const DEFAULT_JQL = `project = ${ISSUE_PROJECT_KEY} AND statusCategory != Done ORDER BY priority DESC`;
+const controlClass = "input input-bordered input-sm";
+const primaryButtonClass = "btn btn-primary btn-sm";
+const secondaryButtonClass = "btn btn-outline btn-sm";
+const accordionClass = "collapse collapse-plus rounded-box border border-base-300 bg-base-100 shadow-sm";
 
 function toIsoDate(d) {
   const year = d.getFullYear();
@@ -27,7 +25,7 @@ function todayIso() {
   return toIsoDate(new Date());
 }
 
-function getWorkingDays(startIso, count = 10) {
+function getWorkingDays(startIso, count = 9) {
   const start = fromIsoDate(startIso);
   const result = [];
   const d = new Date(start);
@@ -51,9 +49,18 @@ function dayLabel(iso) {
   });
 }
 
-function buildDefaultSessionName(startIso) {
+function extractProjectKeyFromJql(jql) {
+  const input = String(jql || "");
+  const match = input.match(/\bproject\s*=\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_-]+))/i);
+  return String(match?.[1] || match?.[2] || match?.[3] || "").trim();
+}
+
+function buildDefaultSessionName(startIso, locale = "en-GB", nextSprintNumber = "") {
+  if (nextSprintNumber) {
+    return `sprint-${nextSprintNumber}`;
+  }
   const d = fromIsoDate(startIso);
-  const formattedDate = d.toLocaleDateString("en-GB", {
+  const formattedDate = d.toLocaleDateString(locale, {
     day: "2-digit",
     month: "2-digit",
     year: "numeric"
@@ -90,6 +97,40 @@ function normalizeJiraSettings(value) {
   };
 }
 
+function hasPlannerData(value) {
+  if (!value || typeof value !== "object") return false;
+  const developers = Array.isArray(value.developers) ? value.developers : [];
+  const tickets = Array.isArray(value.tickets) ? value.tickets : [];
+  const assignments =
+    value.assignments && typeof value.assignments === "object" ? value.assignments : {};
+  const blockedSlots =
+    value.blockedSlots && typeof value.blockedSlots === "object" ? value.blockedSlots : {};
+  return (
+    developers.length > 0 ||
+    tickets.length > 0 ||
+    Object.keys(assignments).length > 0 ||
+    Object.keys(blockedSlots).length > 0
+  );
+}
+
+function accordionDefaults(dataPresent) {
+  if (dataPresent) {
+    return {
+      sprintSetup: false,
+      sessionSaveLoad: false,
+      developers: false,
+      jiraImport: true
+    };
+  }
+
+  return {
+    sprintSetup: true,
+    sessionSaveLoad: true,
+    developers: true,
+    jiraImport: false
+  };
+}
+
 export default function Page() {
   const [state, setState] = useState(emptyState);
   const [devName, setDevName] = useState("");
@@ -100,7 +141,9 @@ export default function Page() {
     ticketId: ""
   });
   const [jiraStatus, setJiraStatus] = useState("");
-  const [sessionName, setSessionName] = useState(() => buildDefaultSessionName(todayIso()));
+  const [developerStatus, setDeveloperStatus] = useState("");
+  const [dateLocale, setDateLocale] = useState("en-GB");
+  const [sessionName, setSessionName] = useState(() => buildDefaultSessionName(todayIso(), "en-GB"));
   const [isDefaultSessionName, setIsDefaultSessionName] = useState(true);
   const [savedSessions, setSavedSessions] = useState([]);
   const [sessionStatus, setSessionStatus] = useState("");
@@ -108,9 +151,17 @@ export default function Page() {
   const [sessionParam, setSessionParam] = useState("");
   const [issueLookup, setIssueLookup] = useState("");
   const [issueLookupStatus, setIssueLookupStatus] = useState("");
+  const [accordionOpen, setAccordionOpen] = useState(() => accordionDefaults(false));
+  const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
+  const [nextSprintId, setNextSprintId] = useState("");
+  const [nextSprintNumber, setNextSprintNumber] = useState("");
+  const assignmentUpdateOriginRef = useRef("");
+  const previousAssignedDeveloperByTicketRef = useRef({});
+  const searchedTicketKeysRef = useRef(new Set());
+  const issueLookupValueRef = useRef("");
 
   const days = useMemo(() => {
-    const workingDays = getWorkingDays(state.sprintStart, state.skipFirstDay ? 11 : 10);
+    const workingDays = getWorkingDays(state.sprintStart, state.skipFirstDay ? 10 : 9);
     return state.skipFirstDay ? workingDays.slice(1) : workingDays;
   }, [state.sprintStart, state.skipFirstDay]);
 
@@ -140,13 +191,167 @@ export default function Page() {
   }, [state.assignments]);
 
   const developerColorById = useMemo(() => {
+    const safeHues = [210, 165, 260, 48, 130, 285, 195, 95];
     const colors = {};
     state.developers.forEach((dev, index) => {
-      const hue = (index * 67) % 360;
-      colors[dev.id] = `hsl(${hue} 55% 92%)`;
+      const hue = safeHues[index % safeHues.length];
+      const lightness = index % 2 === 0 ? 92 : 88;
+      colors[dev.id] = `hsl(${hue} 55% ${lightness}%)`;
     });
     return colors;
   }, [state.developers]);
+
+  const freeDaysByDeveloper = useMemo(() => {
+    const result = {};
+    state.developers.forEach((dev) => {
+      let freeSlots = 0;
+      days.forEach((day) => {
+        ["AM", "PM"].forEach((slot) => {
+          const key = slotKey(dev.id, day, slot);
+          const isBlocked = Boolean(state.blockedSlots?.[key]);
+          const hasAssignment = Boolean(state.assignments?.[key]);
+          if (!isBlocked && !hasAssignment) freeSlots += 1;
+        });
+      });
+      result[dev.id] = freeSlots / 2;
+    });
+    return result;
+  }, [days, state.assignments, state.blockedSlots, state.developers]);
+
+  const ticketsById = useMemo(() => {
+    const byId = {};
+    state.tickets.forEach((ticket) => {
+      byId[ticket.id] = ticket;
+    });
+    return byId;
+  }, [state.tickets]);
+
+  const developersById = useMemo(() => {
+    const byId = {};
+    state.developers.forEach((developer) => {
+      byId[developer.id] = developer;
+    });
+    return byId;
+  }, [state.developers]);
+
+  const downloadSprintDayViewXlsx = async () => {
+    const exceljsModule = await import("exceljs");
+    const Workbook = exceljsModule.Workbook || exceljsModule.default?.Workbook;
+    if (!Workbook) {
+      throw new Error("ExcelJS Workbook export is unavailable.");
+    }
+
+    const workbook = new Workbook();
+    const worksheet = workbook.addWorksheet("Sprint Day View");
+
+    const slotExport = (devId, day, slot) => {
+      const key = slotKey(devId, day, slot);
+      if (state.blockedSlots?.[key]) return { text: "Blocked", kind: "blocked" };
+      const ticketId = state.assignments?.[key];
+      if (!ticketId) return { text: "Free", kind: "free" };
+      const ticket = ticketsById[ticketId];
+      return {
+        text: ticket ? `${ticket.key} - ${ticket.summary}` : String(ticketId),
+        kind: "assigned"
+      };
+    };
+
+    const totalColumns = 2 + days.length;
+    worksheet.columns = [
+      { width: 24 },
+      { width: 10 },
+      ...Array.from({ length: totalColumns - 2 }, () => ({ width: 24 }))
+    ];
+    worksheet.views = [{ state: "frozen", xSplit: 2, ySplit: 1 }];
+
+    worksheet.getCell(1, 1).value = "Developer";
+    worksheet.getCell(1, 2).value = "Slot";
+    days.forEach((day, index) => {
+      const col = 3 + index;
+      worksheet.getCell(1, col).value = dayLabel(day);
+    });
+
+    const headerFill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFF4FB" } };
+    for (let col = 1; col <= totalColumns; col += 1) {
+      const cell = worksheet.getCell(1, col);
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.fill = headerFill;
+      cell.border = {
+        top: { style: "thin", color: { argb: "FFD0D7DE" } },
+        left: { style: "thin", color: { argb: "FFD0D7DE" } },
+        bottom: { style: "thin", color: { argb: "FFD0D7DE" } },
+        right: { style: "thin", color: { argb: "FFD0D7DE" } }
+      };
+    }
+
+    state.developers.forEach((dev, devIndex) => {
+      const amRowNumber = 2 + devIndex * 2;
+      const pmRowNumber = amRowNumber + 1;
+      const amRow = worksheet.getRow(amRowNumber);
+      const pmRow = worksheet.getRow(pmRowNumber);
+      const freeDays = freeDaysByDeveloper[dev.id] ?? 0;
+      worksheet.mergeCells(amRowNumber, 1, pmRowNumber, 1);
+      const devCell = worksheet.getCell(amRowNumber, 1);
+      devCell.value = `${dev.name} (${freeDays} free day${freeDays === 1 ? "" : "s"})`;
+      devCell.font = { bold: true };
+      devCell.alignment = { vertical: "middle", wrapText: true };
+
+      amRow.getCell(2).value = "AM";
+      pmRow.getCell(2).value = "PM";
+      amRow.getCell(2).font = { bold: true };
+      pmRow.getCell(2).font = { bold: true };
+      amRow.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
+      pmRow.getCell(2).alignment = { horizontal: "center", vertical: "middle" };
+
+      days.forEach((day, dayIndex) => {
+        const col = 3 + dayIndex;
+        const am = slotExport(dev.id, day, "AM");
+        const pm = slotExport(dev.id, day, "PM");
+        const cells = [
+          { row: amRow, value: am },
+          { row: pmRow, value: pm }
+        ];
+
+        cells.forEach(({ row, value }) => {
+          const cell = row.getCell(col);
+          cell.value = value.text;
+          cell.alignment = { vertical: "top", wrapText: true };
+          if (value.kind === "blocked") {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFDE2E2" } };
+          } else if (value.kind === "assigned") {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFFBF2" } };
+          }
+        });
+      });
+
+      [amRow, pmRow].forEach((row) => {
+        for (let col = 1; col <= totalColumns; col += 1) {
+          const cell = row.getCell(col);
+          cell.border = {
+            top: { style: "thin", color: { argb: "FFE5E7EB" } },
+            left: { style: "thin", color: { argb: "FFE5E7EB" } },
+            bottom: { style: "thin", color: { argb: "FFE5E7EB" } },
+            right: { style: "thin", color: { argb: "FFE5E7EB" } }
+          };
+        }
+        row.height = 30;
+      });
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `sprint-day-view-${state.sprintStart}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  };
 
   const refreshSavedSessions = useCallback(async () => {
     try {
@@ -173,6 +378,7 @@ export default function Page() {
       ...loadedState,
       jira: normalizeJiraSettings(loadedState.jira)
     });
+    setAccordionOpen(accordionDefaults(hasPlannerData(loadedState)));
 
     if (session?.name) {
       setSessionName(session.name);
@@ -220,28 +426,56 @@ export default function Page() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    const querySession = new URLSearchParams(window.location.search).get("session");
-    setSessionParam(String(querySession || "").trim());
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        setState({
-          ...emptyState(),
-          ...parsed,
-          jira: normalizeJiraSettings(parsed.jira)
-        });
-      } catch {
-        setState(emptyState());
-      }
+    const locale = String(window.navigator?.language || "").trim();
+    if (locale) {
+      setDateLocale(locale);
     }
+  }, []);
+
+  useEffect(() => {
+    issueLookupValueRef.current = issueLookup;
+  }, [issueLookup]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const querySession = params.get("session") || params.get("sessions");
+    setSessionParam(String(querySession || "").trim());
+    setState(emptyState());
+    setAccordionOpen(accordionDefaults(false));
     void refreshSavedSessions();
   }, [refreshSavedSessions]);
 
   useEffect(() => {
     if (!isDefaultSessionName) return;
-    setSessionName(buildDefaultSessionName(state.sprintStart));
-  }, [isDefaultSessionName, state.sprintStart]);
+    setSessionName(buildDefaultSessionName(state.sprintStart, dateLocale, nextSprintNumber));
+  }, [isDefaultSessionName, state.sprintStart, dateLocale, nextSprintNumber]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/jira/next-sprint", {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store"
+        });
+        if (!res.ok) return;
+        const body = await res.json();
+        const sprintId = String(body?.id || "").trim();
+        const number = String(body?.number || "").trim();
+        if (!cancelled) {
+          if (sprintId) setNextSprintId(sprintId);
+          if (number) setNextSprintNumber(number);
+        }
+      } catch {
+        // Keep the date-based fallback session name if Jira sprint lookup is unavailable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!sessionParam) return;
@@ -263,24 +497,60 @@ export default function Page() {
     })();
   }, [sessionParam, loadSessionById, loadSessionByName]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
-
   const addDeveloper = () => {
     const name = devName.trim();
     if (!name) return;
-    const dev = { id: makeId("dev"), name };
-    setState((prev) => ({ ...prev, developers: [...prev.developers, dev] }));
-    setDevName("");
-    setAssignForm((prev) => ({ ...prev, devId: prev.devId || dev.id }));
+    setDeveloperStatus(`Checking Jira users for "${name}"...`);
+    void (async () => {
+      let linkedJiraUser = null;
+      try {
+        const res = await fetch("/api/jira/users", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json"
+          },
+          body: JSON.stringify({
+            query: name,
+            projectKey: extractProjectKeyFromJql(state.jira.jql)
+          })
+        });
+
+        if (res.ok) {
+          const body = await res.json();
+          const users = Array.isArray(body?.users) ? body.users : [];
+          const exactMatch = users.find(
+            (user) => String(user?.displayName || "").trim().toLowerCase() === name.toLowerCase()
+          );
+          linkedJiraUser = exactMatch || (users.length === 1 ? users[0] : null);
+        }
+      } catch {
+        // Keep local developer creation available even when Jira lookup is unavailable.
+      }
+
+      const dev = {
+        id: makeId("dev"),
+        name,
+        jiraAccountId: linkedJiraUser?.accountId || "",
+        jiraDisplayName: linkedJiraUser?.displayName || ""
+      };
+
+      setState((prev) => ({ ...prev, developers: [...prev.developers, dev] }));
+      setDevName("");
+      setAssignForm((prev) => ({ ...prev, devId: prev.devId || dev.id }));
+      setDeveloperStatus(
+        linkedJiraUser
+          ? `Added "${name}" and linked Jira user "${linkedJiraUser.displayName}".`
+          : `Added "${name}" without a Jira link. Assignments to this developer won't sync to Jira.`
+      );
+    })();
   };
 
   const assignSlot = () => {
     const { devId, dayIso, slot, ticketId } = assignForm;
     if (!devId || !dayIso || !slot || !ticketId) return;
     const targetSlotKey = slotKey(devId, dayIso, slot);
+    assignmentUpdateOriginRef.current = "user";
     setState((prev) => ({
       ...prev,
       assignments: placeTicketForward(prev, ticketId, targetSlotKey)
@@ -295,6 +565,7 @@ export default function Page() {
   };
 
   const clearSlotByKey = (key) => {
+    assignmentUpdateOriginRef.current = "user";
     setState((prev) => {
       const next = { ...prev.assignments };
       delete next[key];
@@ -303,6 +574,7 @@ export default function Page() {
   };
 
   const clearTicketAssignments = (ticketId) => {
+    assignmentUpdateOriginRef.current = "user";
     setState((prev) => {
       const next = {};
       Object.entries(prev.assignments).forEach(([key, assignedTicketId]) => {
@@ -396,6 +668,7 @@ export default function Page() {
 
     if (!payload.ticketId) return;
 
+    assignmentUpdateOriginRef.current = "user";
     setState((prev) => {
       const ticketExists = prev.tickets.some((ticket) => ticket.id === payload.ticketId);
       if (!ticketExists) return prev;
@@ -432,6 +705,7 @@ export default function Page() {
   };
 
   const removeDeveloper = (devId) => {
+    assignmentUpdateOriginRef.current = "user";
     setState((prev) => {
       const nextAssignments = {};
       Object.entries(prev.assignments).forEach(([k, v]) => {
@@ -453,7 +727,12 @@ export default function Page() {
   };
 
   const removeTicket = (ticketId) => {
+    assignmentUpdateOriginRef.current = "user";
     setState((prev) => {
+      const ticketToRemove = prev.tickets.find((t) => t.id === ticketId);
+      if (ticketToRemove?.key) {
+        searchedTicketKeysRef.current.delete(ticketToRemove.key);
+      }
       const nextAssignments = {};
       Object.entries(prev.assignments).forEach(([k, v]) => {
         if (v !== ticketId) nextAssignments[k] = v;
@@ -525,10 +804,18 @@ export default function Page() {
       }
 
       const body = await res.json();
+      const importedDevelopersByAccountId = {};
       const imported = (body.issues || []).map((issue) => {
         const fields = issue.fields || {};
         const estSec = fields.timeestimate || fields.timeoriginalestimate || 14400;
         const estimatedHours = Math.max(4, Math.ceil(estSec / 3600 / 4) * 4);
+        const assignee = fields.assignee || null;
+        if (assignee?.accountId && assignee?.displayName) {
+          importedDevelopersByAccountId[assignee.accountId] = {
+            accountId: assignee.accountId,
+            displayName: assignee.displayName
+          };
+        }
         return {
           id: makeId("ticket"),
           key: issue.key,
@@ -539,7 +826,45 @@ export default function Page() {
 
       setState((prev) => ({
         ...prev,
-        tickets: imported
+        tickets: imported,
+        developers: (() => {
+          const importedDevelopers = Object.values(importedDevelopersByAccountId);
+          if (!importedDevelopers.length) return prev.developers;
+
+          const nextDevelopers = [...prev.developers];
+          importedDevelopers.forEach((jiraDeveloper) => {
+            const accountId = String(jiraDeveloper.accountId || "").trim();
+            const displayName = String(jiraDeveloper.displayName || "").trim();
+            if (!accountId || !displayName) return;
+
+            const byAccount = nextDevelopers.find((dev) => dev.jiraAccountId === accountId);
+            if (byAccount) return;
+
+            const byName = nextDevelopers.find(
+              (dev) =>
+                !dev.jiraAccountId && String(dev.name || "").trim().toLowerCase() === displayName.toLowerCase()
+            );
+            if (byName) {
+              const byNameIndex = nextDevelopers.findIndex((dev) => dev.id === byName.id);
+              if (byNameIndex !== -1) {
+                nextDevelopers[byNameIndex] = {
+                  ...byName,
+                  jiraAccountId: accountId,
+                  jiraDisplayName: displayName
+                };
+              }
+              return;
+            }
+
+            nextDevelopers.push({
+              id: makeId("dev"),
+              name: displayName,
+              jiraAccountId: accountId,
+              jiraDisplayName: displayName
+            });
+          });
+          return nextDevelopers;
+        })()
       }));
       setJiraStatus(`Loaded ${imported.length} issues from Jira.`);
     } catch (error) {
@@ -578,63 +903,62 @@ export default function Page() {
     return (body.issues || [])[0] || null;
   };
 
-  const findIssueAndAddTicket = async () => {
-    const raw = issueLookup.trim().toUpperCase();
-    if (!raw) {
-      setIssueLookupStatus("Enter an issue key or number first.");
-      return;
-    }
-
-    const validIssueKeyPattern = /^[A-Z][A-Z0-9_]*-\d+$/;
-    const validIssueNumberPattern = /^\d+$/;
-    const knownProjectPrefixes = Array.from(
-      new Set(
-        state.tickets
-          .map((ticket) => String(ticket.key || "").toUpperCase())
-          .filter((ticketKey) => validIssueKeyPattern.test(ticketKey))
-          .map((ticketKey) => ticketKey.split("-")[0])
-      )
-    );
-
-    const issueKeysToTry = validIssueKeyPattern.test(raw)
-      ? [raw]
-      : validIssueNumberPattern.test(raw)
-        ? knownProjectPrefixes.map((prefix) => `${prefix}-${raw}`)
-        : [];
-
-    if (!issueKeysToTry.length) {
-      setIssueLookupStatus(
-        validIssueNumberPattern.test(raw)
-          ? "Load Jira tickets first or search with a full key like ABC-123."
-          : "Use a valid issue key (ABC-123) or number."
+  const clearSearchedTickets = () => {
+    if (!searchedTicketKeysRef.current.size) return;
+    const searchedKeys = new Set(searchedTicketKeysRef.current);
+    assignmentUpdateOriginRef.current = "user";
+    setState((prev) => {
+      const ticketIdsToRemove = new Set(
+        prev.tickets.filter((ticket) => searchedKeys.has(ticket.key)).map((ticket) => ticket.id)
       );
+      if (!ticketIdsToRemove.size) return prev;
+
+      const nextTickets = prev.tickets.filter((ticket) => !ticketIdsToRemove.has(ticket.id));
+      const nextAssignments = {};
+      Object.entries(prev.assignments || {}).forEach(([key, ticketId]) => {
+        if (!ticketIdsToRemove.has(ticketId)) nextAssignments[key] = ticketId;
+      });
+
+      return { ...prev, tickets: nextTickets, assignments: nextAssignments };
+    });
+    searchedTicketKeysRef.current.clear();
+  };
+
+  useEffect(() => {
+    if (issueLookup.trim()) return;
+    clearSearchedTickets();
+  }, [issueLookup, state.assignments, state.tickets]);
+
+  const findIssueAndAddTicket = async () => {
+    const raw = issueLookup.trim();
+    if (!raw) {
+      setIssueLookupStatus("Enter an issue number first.");
       return;
     }
 
-    setIssueLookupStatus(`Searching ${issueKeysToTry.length > 1 ? "matching keys" : "issue"}...`);
+    const validIssueNumberPattern = /^\d+$/;
+    if (!validIssueNumberPattern.test(raw)) {
+      setIssueLookupStatus(`Use issue number only (for example: ${ISSUE_PROJECT_KEY}-123 => 123).`);
+      return;
+    }
+
+    const issueKey = `${ISSUE_PROJECT_KEY}-${raw}`;
+
+    setIssueLookupStatus(`Searching ${issueKey}...`);
 
     try {
-      let foundIssue = null;
-      for (const issueKey of issueKeysToTry) {
-        // Jira issue numbers are project-scoped, so number-only search may need multiple project prefixes.
-        // Try known project prefixes one by one and stop at the first hit.
-        const issue = await loadSingleIssueByKey(issueKey);
-        if (issue) {
-          foundIssue = issue;
-          break;
-        }
-      }
+      const foundIssue = await loadSingleIssueByKey(issueKey);
 
       if (!foundIssue) {
-        setIssueLookupStatus(
-          issueKeysToTry.length > 1
-            ? `No issue found for #${raw} in loaded projects.`
-            : `No issue found for ${issueKeysToTry[0]}.`
-        );
+        setIssueLookupStatus(`No issue found for ${issueKey}.`);
         return;
       }
 
       const ticket = mapJiraIssueToTicket(foundIssue);
+      searchedTicketKeysRef.current.add(ticket.key);
+      if (!issueLookupValueRef.current.trim()) {
+        clearSearchedTickets();
+      }
       const alreadyExists = state.tickets.some((current) => current.key === ticket.key);
       if (alreadyExists) {
         setIssueLookupStatus(`${ticket.key} is already in the ticket list.`);
@@ -653,133 +977,283 @@ export default function Page() {
     }
   };
 
+  useEffect(() => {
+    const previous = previousAssignedDeveloperByTicketRef.current;
+    const current = assignedDeveloperByTicket;
+    previousAssignedDeveloperByTicketRef.current = current;
+
+    if (assignmentUpdateOriginRef.current !== "user") return;
+    assignmentUpdateOriginRef.current = "";
+
+    const changedTickets = [];
+    const candidateTicketIds = new Set([...Object.keys(previous), ...Object.keys(current)]);
+    candidateTicketIds.forEach((ticketId) => {
+      const previousDevId = String(previous[ticketId] || "").trim();
+      const currentDevId = String(current[ticketId] || "").trim();
+      if (previousDevId === currentDevId) return;
+      changedTickets.push({ ticketId, developerId: currentDevId });
+    });
+    if (!changedTickets.length) return;
+
+    void (async () => {
+      for (const { ticketId, developerId } of changedTickets) {
+        const ticket = ticketsById[ticketId];
+        if (!ticket?.key) continue;
+
+        const isRemoval = !developerId;
+        const developer = isRemoval ? null : developersById[developerId];
+
+        if (!isRemoval && !developer) continue;
+
+        const jiraAccountId = String(developer?.jiraAccountId || "").trim();
+        if (!isRemoval && !jiraAccountId) {
+          setDeveloperStatus(`"${developer.name}" is not linked to Jira, so ${ticket.key} was not synced.`);
+          continue;
+        }
+
+        try {
+          const res = await fetch("/api/jira/assign", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json"
+            },
+            body: JSON.stringify({
+              issueKey: ticket.key,
+              accountId: jiraAccountId,
+              sprintId: nextSprintId,
+              unassign: isRemoval,
+              removeFromSprint: isRemoval
+            })
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `Jira assignee update failed (${res.status})`);
+          }
+          if (isRemoval) {
+            setDeveloperStatus(`Cleared ${ticket.key} assignee in Jira and removed it from sprint.`);
+          } else {
+            setDeveloperStatus(
+              `Synced ${ticket.key} to "${developer.name}" in Jira and updated sprint ${nextSprintNumber || "(current)"}.`
+            );
+          }
+        } catch (error) {
+          setDeveloperStatus(`Unable to sync ${ticket.key} to Jira: ${String(error.message || error)}`);
+        }
+      }
+    })();
+  }, [assignedDeveloperByTicket, developersById, ticketsById, nextSprintId, nextSprintNumber]);
+
   return (
-    <main className="mx-auto grid gap-4 p-6">
-      <h1 className="mb-2 text-3xl font-semibold">Sprint Planner</h1>
-      <p className="text-sm text-slate-500">
-        Plan a 2-week sprint (10 working days), with AM/PM 4-hour slots per developer.
-      </p>
+    <main className="relative mx-auto grid gap-4 p-4">
+      {isSettingsMenuOpen ? (
+        <button
+          type="button"
+          aria-label="Close settings menu overlay"
+          className="fixed inset-0 z-30 bg-black/30"
+          onClick={() => setIsSettingsMenuOpen(false)}
+        />
+      ) : null}
 
-      <section className="grid gap-2.5 rounded-lg border border-slate-200 bg-white p-3.5">
-        <h2 className="mb-2 text-xl font-semibold">Sprint Setup</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="text-sm font-medium">Sprint start date</label>
-          <input
-            className={controlClass}
-            type="date"
-            value={state.sprintStart}
-            onChange={(e) => setState((p) => ({ ...p, sprintStart: e.target.value }))}
-          />
-          <label className="text-sm font-medium">Skip first sprint day</label>
-          <select
-            className={controlClass}
-            value={state.skipFirstDay ? "yes" : "no"}
-            onChange={(e) =>
-              setState((p) => ({ ...p, skipFirstDay: e.target.value === "yes" }))
-            }
-          >
-            <option value="no">No</option>
-            <option value="yes">Yes</option>
-          </select>
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 w-full max-w-md overflow-y-auto border-r border-base-300 bg-base-100 p-4 shadow-xl transition-transform duration-200 ${
+          isSettingsMenuOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-xl font-semibold">Settings</h2>
+          <button className="btn btn-square btn-sm" type="button" onClick={() => setIsSettingsMenuOpen(false)}>
+            ✕
+          </button>
         </div>
-      </section>
 
-      <section className="grid gap-2.5 rounded-lg border border-slate-200 bg-white p-3.5">
-        <h2 className="mb-2 text-xl font-semibold">Session Save/Load (database)</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            className={`${controlClass} min-w-56`}
-            placeholder="Session name"
-            value={sessionName}
-            onChange={(e) => {
-              setSessionName(e.target.value);
-              setIsDefaultSessionName(false);
+        <div className="grid gap-3">
+          <details
+            className={accordionClass}
+            open={accordionOpen.sprintSetup}
+            onToggle={(event) => {
+              const isOpen = event.currentTarget.open;
+              setAccordionOpen((prev) => ({ ...prev, sprintSetup: isOpen }));
             }}
-          />
-          <button className={primaryButtonClass} onClick={saveNamedSession}>
-            Save Session
-          </button>
-          <select
-            className={`${controlClass} min-w-56`}
-            onChange={(e) => loadNamedSession(e.target.value)}
-            defaultValue=""
           >
-            <option value="" disabled>
-              Load saved session
-            </option>
-            {savedSessions.map((s) => (
-              <option key={s.name} value={s.name}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-          <button className={secondaryButtonClass} onClick={refreshSavedSessions}>
-            Refresh
-          </button>
-        </div>
-        <p className="text-xs text-slate-500">{sessionStatus}</p>
-      </section>
+            <summary className="collapse-title text-xl font-semibold">Sprint Setup</summary>
+            <div className="collapse-content">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="text-sm font-medium">Sprint start date</label>
+                <input
+                  className={controlClass}
+                  type="date"
+                  value={state.sprintStart}
+                  onChange={(e) => setState((p) => ({ ...p, sprintStart: e.target.value }))}
+                />
+                <label className="text-sm font-medium">Skip first sprint day</label>
+                <select
+                  className={controlClass}
+                  value={state.skipFirstDay ? "yes" : "no"}
+                  onChange={(e) =>
+                    setState((p) => ({ ...p, skipFirstDay: e.target.value === "yes" }))
+                  }
+                >
+                  <option value="no">No</option>
+                  <option value="yes">Yes</option>
+                </select>
+              </div>
+            </div>
+          </details>
 
-      <section className="grid gap-2.5 rounded-lg border border-slate-200 bg-white p-3.5">
-        <h2 className="mb-2 text-xl font-semibold">Developers</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            className={`${controlClass} min-w-56`}
-            placeholder="Developer name"
-            value={devName}
-            onChange={(e) => setDevName(e.target.value)}
-          />
-          <button className={primaryButtonClass} onClick={addDeveloper}>
-            Add
-          </button>
+          <details
+            className={accordionClass}
+            open={accordionOpen.sessionSaveLoad}
+            onToggle={(event) => {
+              const isOpen = event.currentTarget.open;
+              setAccordionOpen((prev) => ({ ...prev, sessionSaveLoad: isOpen }));
+            }}
+          >
+            <summary className="collapse-title text-xl font-semibold">Session Save/Load (database)</summary>
+            <div className="collapse-content grid gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className={`${controlClass} min-w-56`}
+                  placeholder="Session name"
+                  value={sessionName}
+                  onChange={(e) => {
+                    setSessionName(e.target.value);
+                    setIsDefaultSessionName(false);
+                  }}
+                />
+                <button className={primaryButtonClass} onClick={saveNamedSession}>
+                  Save Session
+                </button>
+                <select
+                  className={`${controlClass} min-w-56`}
+                  onChange={(e) => loadNamedSession(e.target.value)}
+                  defaultValue=""
+                >
+                  <option value="" disabled>
+                    Load saved session
+                  </option>
+                  {savedSessions.map((s) => (
+                    <option key={s.name} value={s.name}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <button className={secondaryButtonClass} onClick={refreshSavedSessions}>
+                  Refresh
+                </button>
+              </div>
+              <p className="text-xs opacity-70">{sessionStatus}</p>
+            </div>
+          </details>
+
+          <details
+            className={accordionClass}
+            open={accordionOpen.developers}
+            onToggle={(event) => {
+              const isOpen = event.currentTarget.open;
+              setAccordionOpen((prev) => ({ ...prev, developers: isOpen }));
+            }}
+          >
+            <summary className="collapse-title text-xl font-semibold">Developers</summary>
+            <div className="collapse-content grid gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className={`${controlClass} min-w-56`}
+                  placeholder="Developer name"
+                  value={devName}
+                  onChange={(e) => setDevName(e.target.value)}
+                />
+                <button className={primaryButtonClass} onClick={addDeveloper}>
+                  Add
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {state.developers.map((dev) => (
+                  <button
+                    key={dev.id}
+                    className="btn btn-sm border-base-300 text-base-content"
+                    style={{ backgroundColor: developerColorById[dev.id] }}
+                    onClick={() => removeDeveloper(dev.id)}
+                  >
+                    {dev.name}
+                    {dev.jiraAccountId ? " (Jira linked)" : ""}
+                    {" ×"}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs opacity-70">{developerStatus}</p>
+            </div>
+          </details>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {state.developers.map((dev) => (
-            <button
-              key={dev.id}
-              className="h-9 rounded-lg border border-slate-300 bg-slate-100 px-3 text-sm font-medium text-slate-800 shadow-sm"
-              onClick={() => removeDeveloper(dev.id)}
-            >
-              {dev.name} ×
+      </aside>
+
+      <div className="mb-2 flex items-center gap-3">
+        <button
+          className="btn btn-square btn-sm"
+          type="button"
+          aria-label="Open settings menu"
+          onClick={() => setIsSettingsMenuOpen((prev) => !prev)}
+        >
+          ☰
+        </button>
+        <div>
+          <h1 className="text-3xl font-semibold">Sprint Planner</h1>
+          <p className="text-sm opacity-70">
+            Plan a sprint (9 working days), with AM/PM 4-hour slots per developer.
+          </p>
+        </div>
+      </div>
+
+      <details
+        className={accordionClass}
+        open={accordionOpen.jiraImport}
+        onToggle={(event) => {
+          const isOpen = event.currentTarget.open;
+          setAccordionOpen((prev) => ({ ...prev, jiraImport: isOpen }));
+        }}
+      >
+        <summary className="collapse-title text-xl font-semibold">Jira Import</summary>
+        <div className="collapse-content grid gap-2">
+          <p className="text-xs opacity-70">
+            Requests are sent through this app server to avoid browser CORS blocks.
+          </p>
+          <p className="text-xs opacity-70">
+            Set Jira server values in .env: JIRA_EMAIL, JIRA_API_TOKEN, and JIRA_BOARD_ID.
+          </p>
+          <div className="grid items-center gap-2 md:grid-cols-[160px_minmax(250px,1fr)]">
+            <label className="text-sm font-medium">JQL</label>
+            <input
+              className={`${controlClass} w-full`}
+              value={state.jira.jql}
+              onChange={(e) => setState((p) => ({ ...p, jira: { ...p.jira, jql: e.target.value } }))}
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button className={primaryButtonClass} onClick={loadJiraTickets}>
+              Load Jira Tickets
             </button>
-          ))}
+            <span className="text-xs opacity-70">{jiraStatus}</span>
+          </div>
         </div>
-      </section>
+      </details>
 
-      <section className="grid gap-2.5 rounded-lg border border-slate-200 bg-white p-3.5">
-        <h2 className="mb-2 text-xl font-semibold">Jira Import</h2>
-        <p className="text-xs text-slate-500">
-          Requests are sent through this app server to avoid browser CORS blocks.
-        </p>
-        <p className="text-xs text-slate-500">
-          Set Jira server values in .env: JIRA_EMAIL, and JIRA_API_TOKEN.
-        </p>
-        <div className="grid items-center gap-2 md:grid-cols-[160px_minmax(250px,1fr)]">
-          <label className="text-sm font-medium">JQL</label>
-          <input
-            className={`${controlClass} w-full`}
-            value={state.jira.jql}
-            onChange={(e) => setState((p) => ({ ...p, jira: { ...p.jira, jql: e.target.value } }))}
-          />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button className={primaryButtonClass} onClick={loadJiraTickets}>
-            Load Jira Tickets
-          </button>
-          <span className="text-xs text-slate-500">{jiraStatus}</span>
-        </div>
-      </section>
-
-      <div className="flex gap-4 flex-col xl:flex-row overflow-scroll scrollbar-thin scrollbar-thumb-rounded scrollbar-thumb-slate-300 scrollbar-track-slate-100">
-        <section className="grid gap-2.5 rounded-lg border border-slate-200 bg-white p-3.5">
+      <div className="grid min-h-0 gap-4">
+        <section className="card flex h-[300px] min-h-0 flex-col rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
           <h2 className="mb-2 text-xl font-semibold">Tickets</h2>
-          <p className="text-xs text-slate-500">Drag ticket rows into AM/PM cells to plan them.</p>
+          <p className="text-xs opacity-70">Drag ticket rows into AM/PM cells to plan them.</p>
           <div className="flex flex-wrap items-center gap-2">
             <input
               className={`${controlClass} min-w-56`}
-              placeholder="Issue number or key (e.g. 123 or ABC-123)"
+              placeholder={`Issue number (e.g. 123 for ${ISSUE_PROJECT_KEY}-123)`}
               value={issueLookup}
-              onChange={(event) => setIssueLookup(event.target.value)}
+              onChange={(event) => {
+                const nextValue = event.target.value;
+                issueLookupValueRef.current = nextValue;
+                setIssueLookup(nextValue);
+                if (!nextValue.trim()) {
+                  clearSearchedTickets();
+                }
+              }}
               onKeyDown={(event) => {
                 if (event.key !== "Enter") return;
                 event.preventDefault();
@@ -789,62 +1263,64 @@ export default function Page() {
             <button className={secondaryButtonClass} type="button" onClick={() => void findIssueAndAddTicket()}>
               Find issue
             </button>
-            <span className="text-xs text-slate-500">{issueLookupStatus}</span>
+            <span className="text-xs opacity-70">{issueLookupStatus}</span>
           </div>
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr>
-                <th className="border border-slate-200 p-2 text-left align-top font-semibold">Key</th>
-                <th className="border border-slate-200 p-2 text-left align-top font-semibold">Summary</th>
-                <th className="border border-slate-200 p-2 text-left align-top font-semibold">Est. (h)</th>
-                <th className="border border-slate-200 p-2 text-left align-top font-semibold">
-                  Planned (h)
-                </th>
-                {/* <th className="border border-slate-200 p-2 text-left align-top font-semibold" /> */}
-              </tr>
-            </thead>
-            <tbody>
-              {state.tickets.map((ticket) => {
-                const isScheduled = Boolean(plannedByTicket[ticket.id]);
-                const assignedDevId = assignedDeveloperByTicket[ticket.id];
-                const scheduledCellStyle =
-                  isScheduled && assignedDevId
-                    ? { backgroundColor: developerColorById[assignedDevId] }
-                    : undefined;
-                return (
-                  <tr
-                    key={ticket.id}
-                    className={`${isScheduled ? "cursor-default text-slate-600" : "cursor-grab active:cursor-grabbing"}`}
-                    draggable={!isScheduled}
-                    onDragStart={
-                      isScheduled ? undefined : (event) => startDraggingTicket(event, ticket.id)
-                    }
-                  >
-                    <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
-                      {ticket.key}
-                    </td>
-                    <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
-                      {ticket.summary}
-                    </td>
-                    <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
-                      {ticket.hours}
-                    </td>
-                    <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
-                      {plannedByTicket[ticket.id] || 0}
-                    </td>
-                    {/* <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
-                      <button
-                        className="h-auto border-0 bg-transparent p-0 text-sm text-red-700"
-                        onClick={() => removeTicket(ticket.id)}
-                      >
-                        Remove
-                      </button>
-                    </td> */}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="mt-2 min-h-0 flex-1 overflow-auto">
+            <table className="table table-zebra table-sm w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="border border-slate-200 p-2 text-left align-top font-semibold">Key</th>
+                  <th className="border border-slate-200 p-2 text-left align-top font-semibold">Summary</th>
+                  <th className="border border-slate-200 p-2 text-left align-top font-semibold">Est. (h)</th>
+                  <th className="border border-slate-200 p-2 text-left align-top font-semibold">
+                    Planned (h)
+                  </th>
+                  {/* <th className="border border-slate-200 p-2 text-left align-top font-semibold" /> */}
+                </tr>
+              </thead>
+              <tbody>
+                {state.tickets.map((ticket) => {
+                  const isScheduled = Boolean(plannedByTicket[ticket.id]);
+                  const assignedDevId = assignedDeveloperByTicket[ticket.id];
+                  const scheduledCellStyle =
+                    isScheduled && assignedDevId
+                      ? { backgroundColor: developerColorById[assignedDevId] }
+                      : undefined;
+                  return (
+                    <tr
+                      key={ticket.id}
+                      className={`${isScheduled ? "cursor-default text-slate-600" : "cursor-grab active:cursor-grabbing"}`}
+                      draggable={!isScheduled}
+                      onDragStart={
+                        isScheduled ? undefined : (event) => startDraggingTicket(event, ticket.id)
+                      }
+                    >
+                      <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
+                        {ticket.key}
+                      </td>
+                      <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
+                        {ticket.summary}
+                      </td>
+                      <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
+                        {ticket.hours}
+                      </td>
+                      <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
+                        {plannedByTicket[ticket.id] || 0}
+                      </td>
+                      {/* <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
+                        <button
+                          className="h-auto border-0 bg-transparent p-0 text-sm text-red-700"
+                          onClick={() => removeTicket(ticket.id)}
+                        >
+                          Remove
+                        </button>
+                      </td> */}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         {/* <section className="grid gap-2.5 rounded-lg border border-slate-200 bg-white p-3.5">
@@ -903,16 +1379,21 @@ export default function Page() {
           </div>
         </section> */}
 
-        <section className="flex flex-col gap-2.5 rounded-lg border border-slate-200 bg-white p-3.5">
-          <h2 className="mb-2 text-xl font-semibold">Sprint Day View</h2>
-          <p className="text-xs text-slate-500">
+        <section className="card flex h-[65vh] min-h-0 min-w-0 max-w-full flex-col gap-3 overflow-hidden rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-xl font-semibold">Sprint Day View</h2>
+            <button className={secondaryButtonClass} type="button" onClick={() => void downloadSprintDayViewXlsx()}>
+              Download Excel
+            </button>
+          </div>
+          <p className="text-xs opacity-70">
             You can drag tickets between slots, remove planned slots, and block AM/PM cells directly in the grid.
           </p>
-          <div className="overflow-auto">
-            <table className="w-full min-w-max border-collapse text-sm">
+          <div className="min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-auto">
+            <table className="w-max min-w-full border-collapse text-sm">
               <thead>
                 <tr>
-                  <th className="min-w-[150px] border border-slate-200 p-2 text-left align-top font-semibold">
+                  <th className="sticky left-0 z-20 min-w-[150px] border border-slate-200 bg-base-100 p-2 text-left align-top font-semibold">
                     Developer
                   </th>
                   {days.map((day) => (
@@ -928,33 +1409,41 @@ export default function Page() {
               <tbody>
                 {state.developers.map((dev) => (
                   <tr key={dev.id}>
-                    <td className="sticky left-0 z-10 min-w-[150px] border border-slate-200 bg-white p-2 text-left align-top">
-                      {dev.name}
+                    <td
+                      className="sticky left-0 z-10 min-w-[150px] border border-slate-200 p-2 text-left align-top"
+                      style={{ backgroundColor: developerColorById[dev.id] || "hsl(var(--b1))" }}
+                    >
+                      <div className="font-medium">{dev.name}</div>
+                      <div className="text-xs opacity-70">
+                        {`${freeDaysByDeveloper[dev.id] ?? 0} free day${
+                          (freeDaysByDeveloper[dev.id] ?? 0) === 1 ? "" : "s"
+                        }`}
+                      </div>
                     </td>
                     {days.map((day) => (
                       <td
                         key={`${dev.id}-${day}`}
                         className="min-w-[120px] border border-slate-200 p-2 text-left align-top"
+                        style={{ backgroundColor: developerColorById[dev.id] || "hsl(var(--b1))" }}
                       >
                         <div className="grid gap-1.5">
-                          {["AM", "PM"].map((slot) => {
+                          {["AM", "PM"].map((slot, slotIndex) => {
                             const currentSlotKey = slotKey(dev.id, day, slot);
                             const ticketId = state.assignments[currentSlotKey];
                             const ticket = state.tickets.find((t) => t.id === ticketId);
                             const isBlocked = Boolean(state.blockedSlots?.[currentSlotKey]);
 
                             return (
-                              <div className="grid grid-cols-[30px_1fr] items-stretch gap-1.5" key={`${dev.id}-${day}-${slot}`}>
-                                <div className="flex items-center text-xs font-semibold text-slate-500">
-                                  {slot}
-                                </div>
+                              <div className="w-full" key={`${dev.id}-${day}-${slot}`}>
                                 <div
-                                  className={`min-h-[52px] rounded-md p-1.5 transition-colors ${
+                                  className={`group box-border h-[96px] w-full overflow-hidden rounded-lg border border-base-300 p-2 shadow-sm transition-colors ${
                                     isBlocked
                                       ? "bg-red-100"
                                       : dragOverSlotKey === currentSlotKey
                                         ? "bg-blue-50"
-                                        : ""
+                                        : slotIndex === 0
+                                          ? "bg-base-100"
+                                          : "bg-base-200/70"
                                   }`}
                                   onDragOver={(event) => handleDragOverSlot(event, currentSlotKey)}
                                   onDrop={(event) => handleDropOnSlot(event, currentSlotKey)}
@@ -965,42 +1454,43 @@ export default function Page() {
                                   }
                                 >
                                   {isBlocked ? (
-                                    <div className="flex items-start justify-between gap-2">
+                                    <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
                                       <span className="text-xs font-semibold text-red-800">Blocked</span>
                                       <button
                                         type="button"
-                                        className="h-[22px] min-w-[22px] rounded-full border border-slate-300 bg-white p-0 text-xs leading-none text-slate-600"
+                                        className="btn btn-xs btn-outline"
                                         onClick={() => toggleSlotBlocked(currentSlotKey)}
                                       >
-                                        ↺
+                                        Revert
                                       </button>
                                     </div>
                                   ) : ticket ? (
                                     <div
-                                      className="flex cursor-grab justify-between gap-2 active:cursor-grabbing"
+                                      className="flex h-full cursor-grab items-start justify-between gap-2 active:cursor-grabbing"
                                       draggable
                                       onDragStart={(event) =>
                                         startDraggingTicket(event, ticket.id, currentSlotKey)
                                       }
                                     >
-                                      <div>
-                                        <div className="font-semibold">{ticket.key}</div>
-                                        <div className="text-xs text-slate-700">{ticket.summary}</div>
+                                      <div className="min-w-0 max-w-[200px] flex-1 overflow-y-auto pr-1">
+                                        <div className="break-words text-sm font-semibold">{ticket.key}</div>
+                                        <div className="whitespace-normal break-words text-xs text-slate-700">
+                                          {ticket.summary}
+                                        </div>
                                       </div>
                                       <button
                                         type="button"
-                                        className="h-[22px] min-w-[22px] rounded-full border border-slate-300 bg-white p-0 text-sm leading-none text-slate-500"
+                                        className="btn btn-circle btn-xs btn-outline shrink-0 self-center"
                                         onClick={() => clearTicketAssignments(ticket.id)}
                                       >
                                         ×
                                       </button>
                                     </div>
                                   ) : (
-                                    <div className="flex items-start justify-between gap-2">
-                                      <span className="text-xs text-slate-500">Free</span>
+                                    <div className="flex h-full items-end justify-end gap-2">
                                       <button
                                         type="button"
-                                        className="h-[22px] min-w-[22px] rounded-full border border-slate-300 bg-white p-0 text-xs leading-none text-slate-600"
+                                        className="btn btn-xs btn-error btn-outline pointer-events-none opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
                                         onClick={() => toggleSlotBlocked(currentSlotKey)}
                                       >
                                         Block

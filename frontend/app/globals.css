@@ -8,6 +8,6 @@
   }
 
   body {
-    @apply m-0 bg-slate-50 font-sans text-slate-900;
+    @apply m-0 font-sans;
   }
 }
