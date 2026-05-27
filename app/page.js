@@ -1044,76 +1044,65 @@ export default function Page() {
     })();
   }, [assignedDeveloperByTicket, developersById, ticketsById, nextSprintId, nextSprintNumber]);
 
-  return (
-    <main className="relative mx-auto grid gap-4 p-4">
-      {isSettingsMenuOpen ? (
-        <button
-          type="button"
-          aria-label="Close settings menu overlay"
-          className="fixed inset-0 z-30 bg-black/30"
-          onClick={() => setIsSettingsMenuOpen(false)}
-        />
-      ) : null}
+  const unscheduledTickets = state.tickets.filter((ticket) => !plannedByTicket[ticket.id]);
 
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 w-full max-w-md overflow-y-auto border-r border-base-300 bg-base-100 p-4 shadow-xl transition-transform duration-200 ${
-          isSettingsMenuOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
-      >
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Settings</h2>
-          <button className="btn btn-square btn-sm" type="button" onClick={() => setIsSettingsMenuOpen(false)}>
-            ✕
-          </button>
+  return (
+    <main className="flex h-screen overflow-hidden text-sm">
+      <aside className="w-80 shrink-0 border-r border-base-300 bg-base-100">
+        <div className="border-b border-base-300 p-4">
+          <h1 className="text-2xl font-semibold text-slate-900">Sprint Planner</h1>
+          <p className="text-xs text-slate-500">Plan a sprint with AM/PM 4-hour slots per developer.</p>
         </div>
 
-        <div className="grid gap-3">
-          <details
-            className={accordionClass}
-            open={accordionOpen.sprintSetup}
-            onToggle={(event) => {
-              const isOpen = event.currentTarget.open;
-              setAccordionOpen((prev) => ({ ...prev, sprintSetup: isOpen }));
-            }}
-          >
-            <summary className="collapse-title text-xl font-semibold">Sprint Setup</summary>
-            <div className="collapse-content">
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="text-sm font-medium">Sprint start date</label>
-                <input
-                  className={controlClass}
-                  type="date"
-                  value={state.sprintStart}
-                  onChange={(e) => setState((p) => ({ ...p, sprintStart: e.target.value }))}
-                />
-                <label className="text-sm font-medium">Skip first sprint day</label>
-                <select
-                  className={controlClass}
-                  value={state.skipFirstDay ? "yes" : "no"}
-                  onChange={(e) =>
-                    setState((p) => ({ ...p, skipFirstDay: e.target.value === "yes" }))
-                  }
-                >
-                  <option value="no">No</option>
-                  <option value="yes">Yes</option>
-                </select>
+        <div className="max-h-[calc(100vh-72px)] overflow-y-auto p-4">
+          <div className="grid gap-3">
+            <details
+              className={accordionClass}
+              open={accordionOpen.sprintSetup}
+              onToggle={(event) => {
+                const isOpen = event.currentTarget.open;
+                setAccordionOpen((prev) => ({ ...prev, sprintSetup: isOpen }));
+              }}
+            >
+              <summary className="collapse-title text-lg font-semibold">Sprint Setup</summary>
+              <div className="collapse-content">
+                <div className="grid gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Sprint start date
+                  </label>
+                  <input
+                    className={controlClass}
+                    type="date"
+                    value={state.sprintStart}
+                    onChange={(e) => setState((p) => ({ ...p, sprintStart: e.target.value }))}
+                  />
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Skip first sprint day
+                  </label>
+                  <select
+                    className={controlClass}
+                    value={state.skipFirstDay ? "yes" : "no"}
+                    onChange={(e) => setState((p) => ({ ...p, skipFirstDay: e.target.value === "yes" }))}
+                  >
+                    <option value="no">No</option>
+                    <option value="yes">Yes</option>
+                  </select>
+                </div>
               </div>
-            </div>
-          </details>
+            </details>
 
-          <details
-            className={accordionClass}
-            open={accordionOpen.sessionSaveLoad}
-            onToggle={(event) => {
-              const isOpen = event.currentTarget.open;
-              setAccordionOpen((prev) => ({ ...prev, sessionSaveLoad: isOpen }));
-            }}
-          >
-            <summary className="collapse-title text-xl font-semibold">Session Save/Load (database)</summary>
-            <div className="collapse-content grid gap-2">
-              <div className="flex flex-wrap items-center gap-2">
+            <details
+              className={accordionClass}
+              open={accordionOpen.sessionSaveLoad}
+              onToggle={(event) => {
+                const isOpen = event.currentTarget.open;
+                setAccordionOpen((prev) => ({ ...prev, sessionSaveLoad: isOpen }));
+              }}
+            >
+              <summary className="collapse-title text-lg font-semibold">Session Save/Load</summary>
+              <div className="collapse-content grid gap-2">
                 <input
-                  className={`${controlClass} min-w-56`}
+                  className={controlClass}
                   placeholder="Session name"
                   value={sessionName}
                   onChange={(e) => {
@@ -1121,14 +1110,15 @@ export default function Page() {
                     setIsDefaultSessionName(false);
                   }}
                 />
-                <button className={primaryButtonClass} onClick={saveNamedSession}>
-                  Save Session
-                </button>
-                <select
-                  className={`${controlClass} min-w-56`}
-                  onChange={(e) => loadNamedSession(e.target.value)}
-                  defaultValue=""
-                >
+                <div className="flex flex-wrap gap-2">
+                  <button className={primaryButtonClass} onClick={saveNamedSession}>
+                    Save Session
+                  </button>
+                  <button className={secondaryButtonClass} onClick={refreshSavedSessions}>
+                    Refresh
+                  </button>
+                </div>
+                <select className={controlClass} onChange={(e) => loadNamedSession(e.target.value)} defaultValue="">
                   <option value="" disabled>
                     Load saved session
                   </option>
@@ -1138,379 +1128,255 @@ export default function Page() {
                     </option>
                   ))}
                 </select>
-                <button className={secondaryButtonClass} onClick={refreshSavedSessions}>
-                  Refresh
-                </button>
+                <p className="text-xs text-slate-500">{sessionStatus}</p>
               </div>
-              <p className="text-xs opacity-70">{sessionStatus}</p>
-            </div>
-          </details>
+            </details>
 
-          <details
-            className={accordionClass}
-            open={accordionOpen.developers}
-            onToggle={(event) => {
-              const isOpen = event.currentTarget.open;
-              setAccordionOpen((prev) => ({ ...prev, developers: isOpen }));
-            }}
-          >
-            <summary className="collapse-title text-xl font-semibold">Developers</summary>
-            <div className="collapse-content grid gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  className={`${controlClass} min-w-56`}
-                  placeholder="Developer name"
-                  value={devName}
-                  onChange={(e) => setDevName(e.target.value)}
-                />
-                <button className={primaryButtonClass} onClick={addDeveloper}>
-                  Add
-                </button>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {state.developers.map((dev) => (
-                  <button
-                    key={dev.id}
-                    className="btn btn-sm border-base-300 text-base-content"
-                    style={{ backgroundColor: developerColorById[dev.id] }}
-                    onClick={() => removeDeveloper(dev.id)}
-                  >
-                    {dev.name}
-                    {dev.jiraAccountId ? " (Jira linked)" : ""}
-                    {" ×"}
+            <details
+              className={accordionClass}
+              open={accordionOpen.developers}
+              onToggle={(event) => {
+                const isOpen = event.currentTarget.open;
+                setAccordionOpen((prev) => ({ ...prev, developers: isOpen }));
+              }}
+            >
+              <summary className="collapse-title text-lg font-semibold">Developers</summary>
+              <div className="collapse-content grid gap-2">
+                <div className="flex gap-2">
+                  <input
+                    className={`${controlClass} flex-1`}
+                    placeholder="Developer name"
+                    value={devName}
+                    onChange={(e) => setDevName(e.target.value)}
+                  />
+                  <button className={primaryButtonClass} onClick={addDeveloper}>
+                    Add
                   </button>
-                ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {state.developers.map((dev) => (
+                    <button
+                      key={dev.id}
+                      className="btn btn-sm border-base-300"
+                      style={{ backgroundColor: developerColorById[dev.id] }}
+                      onClick={() => removeDeveloper(dev.id)}
+                    >
+                      {dev.name}
+                      {dev.jiraAccountId ? " (Jira linked)" : ""}
+                      {" ×"}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-500">{developerStatus}</p>
               </div>
-              <p className="text-xs opacity-70">{developerStatus}</p>
+            </details>
+
+            <details
+              className={accordionClass}
+              open={accordionOpen.jiraImport}
+              onToggle={(event) => {
+                const isOpen = event.currentTarget.open;
+                setAccordionOpen((prev) => ({ ...prev, jiraImport: isOpen }));
+              }}
+            >
+              <summary className="collapse-title text-lg font-semibold">Jira Import</summary>
+              <div className="collapse-content grid gap-2">
+                <p className="text-xs text-slate-500">
+                  Requests are proxied by this app server to avoid browser CORS blocks.
+                </p>
+                <input
+                  className={controlClass}
+                  value={state.jira.jql}
+                  onChange={(e) => setState((p) => ({ ...p, jira: { ...p.jira, jql: e.target.value } }))}
+                />
+                <button className={primaryButtonClass} onClick={loadJiraTickets}>
+                  Load Jira Tickets
+                </button>
+                <p className="text-xs text-slate-500">{jiraStatus}</p>
+              </div>
+            </details>
+          </div>
+
+          <div className="mt-4 border-t border-base-300 pt-4">
+            <h2 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Unassigned Stories</h2>
+            <div className="mb-3 flex flex-col gap-2">
+              <input
+                className={controlClass}
+                placeholder={`Issue number (e.g. 123 for ${ISSUE_PROJECT_KEY}-123)`}
+                value={issueLookup}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  issueLookupValueRef.current = nextValue;
+                  setIssueLookup(nextValue);
+                  if (!nextValue.trim()) clearSearchedTickets();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  void findIssueAndAddTicket();
+                }}
+              />
+              <button className={secondaryButtonClass} type="button" onClick={() => void findIssueAndAddTicket()}>
+                Find issue
+              </button>
+              <p className="text-xs text-slate-500">{issueLookupStatus}</p>
             </div>
-          </details>
+
+            <div className="grid gap-2">
+              {unscheduledTickets.map((ticket) => (
+                <div
+                  key={ticket.id}
+                  draggable
+                  onDragStart={(event) => startDraggingTicket(event, ticket.id)}
+                  className="cursor-grab rounded-lg border border-base-300 bg-base-200 p-3 active:cursor-grabbing"
+                >
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-indigo-700">{ticket.key}</span>
+                    <span className="rounded bg-base-300 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
+                      {ticket.hours}h
+                    </span>
+                  </div>
+                  <p className="line-clamp-2 text-xs text-slate-700">{ticket.summary}</p>
+                </div>
+              ))}
+              {unscheduledTickets.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-base-300 p-4 text-center text-xs text-slate-500">
+                  All tickets have planned slots.
+                </div>
+              ) : null}
+            </div>
+          </div>
         </div>
       </aside>
 
-      <div className="mb-2 flex items-center gap-3">
-        <button
-          className="btn btn-square btn-sm"
-          type="button"
-          aria-label="Open settings menu"
-          onClick={() => setIsSettingsMenuOpen((prev) => !prev)}
-        >
-          ☰
-        </button>
-        <div>
-          <h1 className="text-3xl font-semibold">Sprint Planner</h1>
-          <p className="text-sm opacity-70">
-            Plan a sprint (9 working days), with AM/PM 4-hour slots per developer.
-          </p>
+      <section className="flex-1 overflow-auto bg-base-200 p-6">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-xl font-semibold text-slate-900">Sprint Day View</h2>
+          <button className={secondaryButtonClass} type="button" onClick={() => void downloadSprintDayViewXlsx()}>
+            Download Excel
+          </button>
         </div>
-      </div>
+        <p className="mb-4 text-xs text-slate-500">
+          Drag tickets into the timeline. Drag existing assigned slots to move them or clear/block cells inline.
+        </p>
 
-      <details
-        className={accordionClass}
-        open={accordionOpen.jiraImport}
-        onToggle={(event) => {
-          const isOpen = event.currentTarget.open;
-          setAccordionOpen((prev) => ({ ...prev, jiraImport: isOpen }));
-        }}
-      >
-        <summary className="collapse-title text-xl font-semibold">Jira Import</summary>
-        <div className="collapse-content grid gap-2">
-          <p className="text-xs opacity-70">
-            Requests are sent through this app server to avoid browser CORS blocks.
-          </p>
-          <p className="text-xs opacity-70">
-            Set Jira server values in .env: JIRA_EMAIL, JIRA_API_TOKEN, and JIRA_BOARD_ID.
-          </p>
-          <div className="grid items-center gap-2 md:grid-cols-[160px_minmax(250px,1fr)]">
-            <label className="text-sm font-medium">JQL</label>
-            <input
-              className={`${controlClass} w-full`}
-              value={state.jira.jql}
-              onChange={(e) => setState((p) => ({ ...p, jira: { ...p.jira, jql: e.target.value } }))}
-            />
+        {state.developers.length === 0 ? (
+          <div className="flex h-[70vh] items-center justify-center rounded-xl border border-base-300 bg-base-100 text-slate-500">
+            Add developers in the sidebar to start planning.
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button className={primaryButtonClass} onClick={loadJiraTickets}>
-              Load Jira Tickets
-            </button>
-            <span className="text-xs opacity-70">{jiraStatus}</span>
-          </div>
-        </div>
-      </details>
-
-      <div className="grid min-h-0 gap-4">
-        <section className="card flex h-[300px] min-h-0 flex-col rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-          <h2 className="mb-2 text-xl font-semibold">Tickets</h2>
-          <p className="text-xs opacity-70">Drag ticket rows into AM/PM cells to plan them.</p>
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              className={`${controlClass} min-w-56`}
-              placeholder={`Issue number (e.g. 123 for ${ISSUE_PROJECT_KEY}-123)`}
-              value={issueLookup}
-              onChange={(event) => {
-                const nextValue = event.target.value;
-                issueLookupValueRef.current = nextValue;
-                setIssueLookup(nextValue);
-                if (!nextValue.trim()) {
-                  clearSearchedTickets();
-                }
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter") return;
-                event.preventDefault();
-                void findIssueAndAddTicket();
-              }}
-            />
-            <button className={secondaryButtonClass} type="button" onClick={() => void findIssueAndAddTicket()}>
-              Find issue
-            </button>
-            <span className="text-xs opacity-70">{issueLookupStatus}</span>
-          </div>
-          <div className="mt-2 min-h-0 flex-1 overflow-auto">
-            <table className="table table-zebra table-sm w-full text-sm">
-              <thead>
-                <tr>
-                  <th className="border border-slate-200 p-2 text-left align-top font-semibold">Key</th>
-                  <th className="border border-slate-200 p-2 text-left align-top font-semibold">Summary</th>
-                  <th className="border border-slate-200 p-2 text-left align-top font-semibold">Est. (h)</th>
-                  <th className="border border-slate-200 p-2 text-left align-top font-semibold">
-                    Planned (h)
-                  </th>
-                  {/* <th className="border border-slate-200 p-2 text-left align-top font-semibold" /> */}
-                </tr>
-              </thead>
-              <tbody>
-                {state.tickets.map((ticket) => {
-                  const isScheduled = Boolean(plannedByTicket[ticket.id]);
-                  const assignedDevId = assignedDeveloperByTicket[ticket.id];
-                  const scheduledCellStyle =
-                    isScheduled && assignedDevId
-                      ? { backgroundColor: developerColorById[assignedDevId] }
-                      : undefined;
-                  return (
-                    <tr
-                      key={ticket.id}
-                      className={`${isScheduled ? "cursor-default text-slate-600" : "cursor-grab active:cursor-grabbing"}`}
-                      draggable={!isScheduled}
-                      onDragStart={
-                        isScheduled ? undefined : (event) => startDraggingTicket(event, ticket.id)
-                      }
-                    >
-                      <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
-                        {ticket.key}
-                      </td>
-                      <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
-                        {ticket.summary}
-                      </td>
-                      <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
-                        {ticket.hours}
-                      </td>
-                      <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
-                        {plannedByTicket[ticket.id] || 0}
-                      </td>
-                      {/* <td className="border border-slate-200 p-2 text-left align-top" style={scheduledCellStyle}>
-                        <button
-                          className="h-auto border-0 bg-transparent p-0 text-sm text-red-700"
-                          onClick={() => removeTicket(ticket.id)}
-                        >
-                          Remove
-                        </button>
-                      </td> */}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        {/* <section className="grid gap-2.5 rounded-lg border border-slate-200 bg-white p-3.5">
-          <h2 className="mb-2 text-xl font-semibold">Assign Slot</h2>
-          <div className="flex flex-wrap items-center gap-2">
-            <select
-              className={controlClass}
-              value={assignForm.devId}
-              onChange={(e) => setAssignForm((p) => ({ ...p, devId: e.target.value }))}
-            >
-              <option value="">Developer</option>
-              {state.developers.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className={controlClass}
-              value={assignForm.dayIso}
-              onChange={(e) => setAssignForm((p) => ({ ...p, dayIso: e.target.value }))}
-            >
-              <option value="">Day</option>
-              {days.map((day) => (
-                <option key={day} value={day}>
-                  {dayLabel(day)}
-                </option>
-              ))}
-            </select>
-            <select
-              className={controlClass}
-              value={assignForm.slot}
-              onChange={(e) => setAssignForm((p) => ({ ...p, slot: e.target.value }))}
-            >
-              <option value="AM">AM (4h)</option>
-              <option value="PM">PM (4h)</option>
-            </select>
-            <select
-              className={controlClass}
-              value={assignForm.ticketId}
-              onChange={(e) => setAssignForm((p) => ({ ...p, ticketId: e.target.value }))}
-            >
-              <option value="">Ticket</option>
-              {state.tickets.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.key} - {t.summary}
-                </option>
-              ))}
-            </select>
-            <button className={primaryButtonClass} onClick={assignSlot}>
-              Assign
-            </button>
-            <button className={secondaryButtonClass} onClick={clearSlot}>
-              Clear
-            </button>
-          </div>
-        </section> */}
-
-        <section className="card flex h-[65vh] min-h-0 min-w-0 max-w-full flex-col gap-3 overflow-hidden rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-xl font-semibold">Sprint Day View</h2>
-            <button className={secondaryButtonClass} type="button" onClick={() => void downloadSprintDayViewXlsx()}>
-              Download Excel
-            </button>
-          </div>
-          <p className="text-xs opacity-70">
-            You can drag tickets between slots, remove planned slots, and block AM/PM cells directly in the grid.
-          </p>
-          <div className="min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-auto">
-            <table className="w-max min-w-full border-collapse text-sm">
-              <thead>
-                <tr>
-                  <th className="sticky left-0 z-20 min-w-[150px] border border-slate-200 bg-base-100 p-2 text-left align-top font-semibold">
-                    Developer
-                  </th>
-                  {days.map((day) => (
-                    <th
-                      key={day}
-                      className="min-w-[120px] border border-slate-200 p-2 text-left align-top font-semibold"
-                    >
-                      {dayLabel(day)}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {state.developers.map((dev) => (
-                  <tr key={dev.id}>
-                    <td
-                      className="sticky left-0 z-10 min-w-[150px] border border-slate-200 p-2 text-left align-top"
-                      style={{ backgroundColor: developerColorById[dev.id] || "hsl(var(--b1))" }}
-                    >
-                      <div className="font-medium">{dev.name}</div>
-                      <div className="text-xs opacity-70">
-                        {`${freeDaysByDeveloper[dev.id] ?? 0} free day${
-                          (freeDaysByDeveloper[dev.id] ?? 0) === 1 ? "" : "s"
-                        }`}
-                      </div>
-                    </td>
-                    {days.map((day) => (
-                      <td
-                        key={`${dev.id}-${day}`}
-                        className="min-w-[120px] border border-slate-200 p-2 text-left align-top"
-                        style={{ backgroundColor: developerColorById[dev.id] || "hsl(var(--b1))" }}
-                      >
-                        <div className="grid gap-1.5">
-                          {["AM", "PM"].map((slot, slotIndex) => {
-                            const currentSlotKey = slotKey(dev.id, day, slot);
-                            const ticketId = state.assignments[currentSlotKey];
-                            const ticket = state.tickets.find((t) => t.id === ticketId);
-                            const isBlocked = Boolean(state.blockedSlots?.[currentSlotKey]);
-
-                            return (
-                              <div className="w-full" key={`${dev.id}-${day}-${slot}`}>
-                                <div
-                                  className={`group box-border h-[96px] w-full overflow-hidden rounded-lg border border-base-300 p-2 shadow-sm transition-colors ${
-                                    isBlocked
-                                      ? "bg-red-100"
-                                      : dragOverSlotKey === currentSlotKey
-                                        ? "bg-blue-50"
-                                        : slotIndex === 0
-                                          ? "bg-base-100"
-                                          : "bg-base-200/70"
-                                  }`}
-                                  onDragOver={(event) => handleDragOverSlot(event, currentSlotKey)}
-                                  onDrop={(event) => handleDropOnSlot(event, currentSlotKey)}
-                                  onDragLeave={() =>
-                                    setDragOverSlotKey((current) =>
-                                      current === currentSlotKey ? "" : current
-                                    )
-                                  }
-                                >
-                                  {isBlocked ? (
-                                    <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-                                      <span className="text-xs font-semibold text-red-800">Blocked</span>
-                                      <button
-                                        type="button"
-                                        className="btn btn-xs btn-outline"
-                                        onClick={() => toggleSlotBlocked(currentSlotKey)}
-                                      >
-                                        Revert
-                                      </button>
-                                    </div>
-                                  ) : ticket ? (
-                                    <div
-                                      className="flex h-full cursor-grab items-start justify-between gap-2 active:cursor-grabbing"
-                                      draggable
-                                      onDragStart={(event) =>
-                                        startDraggingTicket(event, ticket.id, currentSlotKey)
-                                      }
-                                    >
-                                      <div className="min-w-0 max-w-[200px] flex-1 overflow-y-auto pr-1">
-                                        <div className="break-words text-sm font-semibold">{ticket.key}</div>
-                                        <div className="whitespace-normal break-words text-xs text-slate-700">
-                                          {ticket.summary}
-                                        </div>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        className="btn btn-circle btn-xs btn-outline shrink-0 self-center"
-                                        onClick={() => clearTicketAssignments(ticket.id)}
-                                      >
-                                        ×
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <div className="flex h-full items-end justify-end gap-2">
-                                      <button
-                                        type="button"
-                                        className="btn btn-xs btn-error btn-outline pointer-events-none opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
-                                        onClick={() => toggleSlotBlocked(currentSlotKey)}
-                                      >
-                                        Block
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </td>
-                    ))}
-                  </tr>
+        ) : (
+          <div className="inline-block min-w-full overflow-hidden rounded-xl border border-base-300 bg-base-100 shadow-sm">
+            <div className="flex border-b border-base-300 bg-base-200">
+              <div className="w-[180px] shrink-0 border-r border-base-300 px-4 py-3 text-xs font-bold uppercase tracking-widest text-slate-500">
+                Developer
+              </div>
+              <div className="flex flex-1">
+                {days.map((day) => (
+                  <div key={day} className="w-[128px] shrink-0 border-r border-base-300 py-2 text-center text-slate-500">
+                    <span className="block text-[11px] font-bold uppercase">{dayLabel(day)}</span>
+                    <div className="mt-1 flex justify-around text-[10px] font-semibold">
+                      <span>AM</span>
+                      <span>PM</span>
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            </div>
+
+            {state.developers.map((dev) => (
+              <div key={dev.id} className="flex border-b border-base-300 last:border-b-0">
+                <div
+                  className="w-[180px] shrink-0 border-r border-base-300 px-4 py-3"
+                  style={{ backgroundColor: developerColorById[dev.id] || "hsl(var(--b1))" }}
+                >
+                  <div className="truncate text-xs font-bold text-slate-800">{dev.name}</div>
+                  <div className="mt-0.5 text-[11px] text-slate-600">
+                    {(freeDaysByDeveloper[dev.id] ?? 0).toFixed(1)} free day
+                    {(freeDaysByDeveloper[dev.id] ?? 0) === 1 ? "" : "s"}
+                  </div>
+                </div>
+                <div className="flex flex-1">
+                  {days.map((day) =>
+                    ["AM", "PM"].map((slot, slotIndex) => {
+                      const currentSlotKey = slotKey(dev.id, day, slot);
+                      const ticketId = state.assignments[currentSlotKey];
+                      const ticket = state.tickets.find((t) => t.id === ticketId);
+                      const isBlocked = Boolean(state.blockedSlots?.[currentSlotKey]);
+                      const isDayStart = slotIndex === 0;
+                      return (
+                        <div
+                          key={`${dev.id}-${day}-${slot}`}
+                          className={`group relative h-[110px] w-[64px] shrink-0 border-l p-1 ${
+                            isDayStart ? "border-base-300" : "border-base-200"
+                          }`}
+                          onDragOver={(event) => handleDragOverSlot(event, currentSlotKey)}
+                          onDrop={(event) => handleDropOnSlot(event, currentSlotKey)}
+                          onDragLeave={() =>
+                            setDragOverSlotKey((current) => (current === currentSlotKey ? "" : current))
+                          }
+                        >
+                          <div
+                            className={`h-full rounded border p-1.5 shadow-sm transition-colors ${
+                              isBlocked
+                                ? "border-red-200 bg-red-100"
+                                : dragOverSlotKey === currentSlotKey
+                                  ? "border-indigo-300 bg-indigo-50"
+                                  : "border-base-300 bg-base-100"
+                            }`}
+                          >
+                            {isBlocked ? (
+                              <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
+                                <span className="text-[11px] font-semibold text-red-800">Blocked</span>
+                                <button
+                                  type="button"
+                                  className="btn btn-xs btn-outline"
+                                  onClick={() => toggleSlotBlocked(currentSlotKey)}
+                                >
+                                  Revert
+                                </button>
+                              </div>
+                            ) : ticket ? (
+                              <div
+                                className="flex h-full cursor-grab flex-col justify-between gap-1 active:cursor-grabbing"
+                                draggable
+                                onDragStart={(event) => startDraggingTicket(event, ticket.id, currentSlotKey)}
+                              >
+                                <div className="min-h-0">
+                                  <div className="truncate text-[11px] font-bold text-indigo-700">{ticket.key}</div>
+                                  <div className="line-clamp-3 break-words text-[10px] text-slate-700">
+                                    {ticket.summary}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="btn btn-xs btn-outline self-end"
+                                  onClick={() => clearTicketAssignments(ticket.id)}
+                                >
+                                  Clear
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex h-full items-end justify-end">
+                                <button
+                                  type="button"
+                                  className="btn btn-xs btn-error btn-outline pointer-events-none opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100"
+                                  onClick={() => toggleSlotBlocked(currentSlotKey)}
+                                >
+                                  Block
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-        </section>
-      </div>
+        )}
+      </section>
     </main>
   );
 }
